@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Billing App - GST Invoicing for Your Business</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <a href="#dashboard">myBillBook</a>
+      </div>
+      <div class="sidebar-business">
+        <label class="sidebar-label">Working with</label>
+        <select id="current-business-select" class="sidebar-business-select" title="Switch business">
+        </select>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#dashboard" class="nav-link">Dashboard</a>
+        <a href="#invoice-new" class="nav-link">+ New Invoice</a>
+        <a href="#invoices" class="nav-link">Invoices</a>
+        <a href="#customers" class="nav-link">Customers</a>
+        <a href="#products" class="nav-link">Products</a>
+        <a href="#reports" class="nav-link">Reports</a>
+        <a href="#settings" class="nav-link">Settings</a>
+      </nav>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
