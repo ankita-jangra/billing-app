@@ -118,6 +118,16 @@ function defaultInvoiceSettings() {
     printHeaderLayout: 'standard', // 'standard', 'flipped', 'centered'
     printWatermark: false,
     printSignatureLabel: '',
+    // Header typography (company name, invoice title, other header text)
+    printCompanyNameFont: 'system-ui, Arial, sans-serif',
+    printCompanyNameColor: '#111827',
+    printCompanyNameSize: 22,
+    printTitleFont: 'system-ui, Arial, sans-serif',
+    printTitleColor: '#4b5563',
+    printTitleSize: 24,
+    printHeaderMetaFont: 'system-ui, Arial, sans-serif',
+    printHeaderMetaColor: '#6b7280',
+    printHeaderMetaSize: 13,
   };
 }
 

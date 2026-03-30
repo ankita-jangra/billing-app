@@ -496,13 +496,8 @@ function amountInWords(num) {
   return (toHundreds(Math.floor(n / 10000000)) + ' Crore ' + amountInWords(n % 10000000)).trim();
 }
 
-// ---------- Print Invoice ----------
-function printInvoice(id) {
-  const inv = D.getInvoiceById(id);
-  if (!inv) return;
-  const business = (inv.businessId && D.getBusinessById(inv.businessId)) || D.getDefaultBusiness();
-  const company = business ? { name: business.name, address: business.address, gstin: business.gstin, state: business.state } : D.getCompany();
-  const settings = business && business.invoiceSettings ? business.invoiceSettings : D.defaultInvoiceSettings();
+// ---------- Build invoice print HTML (shared by print and customize preview) ----------
+function buildInvoicePrintHtml(inv, company, settings, business) {
   let visibleCols = (settings.columns || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).filter((c) => c.visible !== false);
   visibleCols = visibleCols.map((c) => ({ ...c, id: ALL_COLUMN_IDS.includes(c.id) ? c.id : 'qty' }));
   const visibleSummary = (settings.summaryRows || []).filter((r) => r.visible !== false);
@@ -588,6 +583,29 @@ function printInvoice(id) {
   const headerLayout = settings.printHeaderLayout || 'standard';
   const hasWatermark = settings.printWatermark && business && business.logo;
   const sigLabel = settings.printSignatureLabel || '';
+
+  const companyNameFont = settings.printCompanyNameFont || fontFamily;
+  const companyNameColor = (settings.printCompanyNameColor && /^#([0-9A-Fa-f]{3}){1,2}$/.test(settings.printCompanyNameColor)) ? settings.printCompanyNameColor : '#111827';
+  const companyNameSize = Math.min(48, Math.max(12, parseInt(settings.printCompanyNameSize, 10) || 22));
+  const titleFont = settings.printTitleFont || fontFamily;
+  const titleColor = (settings.printTitleColor && /^#([0-9A-Fa-f]{3}){1,2}$/.test(settings.printTitleColor)) ? settings.printTitleColor : '#4b5563';
+  const titleSize = Math.min(48, Math.max(12, parseInt(settings.printTitleSize, 10) || 24));
+  const metaFont = settings.printHeaderMetaFont || fontFamily;
+  const metaColor = (settings.printHeaderMetaColor && /^#([0-9A-Fa-f]{3}){1,2}$/.test(settings.printHeaderMetaColor)) ? settings.printHeaderMetaColor : '#6b7280';
+  const metaSize = Math.min(24, Math.max(10, parseInt(settings.printHeaderMetaSize, 10) || 13));
+
+  const GOOGLE_FONTS = ['Pacifico', 'Great Vibes', 'Dancing Script', 'Bebas Neue', 'Oswald', 'Playfair Display', 'Orbitron', 'Montserrat'];
+  function extractFontName(fontStack) {
+    const m = (fontStack || '').match(/'([^']+)'/);
+    return m ? m[1] : null;
+  }
+  const fontsToLoad = [companyNameFont, titleFont, metaFont].map(extractFontName).filter(Boolean).filter((f, i, a) => a.indexOf(f) === i).filter((f) => GOOGLE_FONTS.indexOf(f) >= 0);
+  const googleFontsImport = fontsToLoad.length ? "@import url('https://fonts.googleapis.com/css2?" + fontsToLoad.map((f) => 'family=' + encodeURIComponent(f).replace(/%20/g, '+')).join('&') + "&display=swap');" : '';
+  const headerTypoCss = `
+    .company h2, .company-name, .company .name, .banner .company h2, .top-block .company-name, .company-block .company-name, .company-col .company-name{ font-family:${companyNameFont}; color:${companyNameColor}; font-size:${companyNameSize}px !important; }
+    .invoice-info h1, .invoice-title-block .title, .title, h1.title, .invoice-title, .banner .invoice-info h1, .top-block .title, .title-col .title{ font-family:${titleFont}; color:${titleColor}; font-size:${titleSize}px !important; }
+    .company p, .company .meta, .invoice-meta, .invoice-info p, .invoice-title-block .meta, .meta, .banner .company p, .banner .invoice-info p, .company .tagline, .tagline{ font-family:${metaFont}; color:${metaColor}; font-size:${metaSize}px !important; }
+  `;
 
   const logoAlignStyle = logoPos === 'center' ? 'margin: 0 auto;' : logoPos === 'right' ? 'margin-left: auto;' : '';
   const watermarkCss = hasWatermark ? `
@@ -1230,7 +1248,7 @@ function printInvoice(id) {
       </body></html>
     `;
   } else {
-    // Default 'modern' theme (the previous design)
+    // Default 'modern' theme
     htmlContent = `
       <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice ${inv.invoiceNumber}</title>
       <style>
@@ -1292,6 +1310,17 @@ function printInvoice(id) {
     `;
   }
 
+  htmlContent = htmlContent.replace(/<style>/, '<style>\n' + googleFontsImport + '\n' + headerTypoCss + '\n');
+  return htmlContent;
+}
+
+function printInvoice(id) {
+  const inv = D.getInvoiceById(id);
+  if (!inv) return;
+  const business = (inv.businessId && D.getBusinessById(inv.businessId)) || D.getDefaultBusiness();
+  const company = business ? { name: business.name, address: business.address, gstin: business.gstin, state: business.state } : D.getCompany();
+  const settings = business && business.invoiceSettings ? business.invoiceSettings : D.defaultInvoiceSettings();
+  const htmlContent = buildInvoicePrintHtml(inv, company, settings, business);
   const win = window.open('', '_blank');
   win.document.write(htmlContent);
   win.document.close();
@@ -1650,89 +1679,198 @@ function renderSettings(container) {
             </div>
           </div>
           <div id="tab-print" class="tab-pane hidden">
-            <p class="muted" style="margin-bottom:16px;">Customize how the invoice looks when you print or save as PDF. These options apply only to the printed view.</p>
-            <div class="form-group">
-              <label>Invoice Theme</label>
-              <select name="printTemplate">
-                <option value="modern">Modern (Clean & spacious, rounded elements)</option>
-                <option value="creative">Creative (Airy, pastel blocks, rounded headers)</option>
-                <option value="elegant">Elegant (Classic serif, minimalist lines, centered)</option>
-                <option value="bold">Bold (Thick side border, high contrast headers)</option>
-                <option value="standard">Standard (Classic business grid look)</option>
-                <option value="smart">Smart (Compact & sleek, split layout)</option>
-                <option value="advance">Advance (Bold colored header banner)</option>
-                <option value="curves">Curves (Swooping color accents top and bottom)</option>
-                <option value="stripes">Stripes (Minimalist with alternating row colors)</option>
-                <option value="block">Block (Solid color header block for company info)</option>
-              </select>
-              <div id="theme-preview-box" class="theme-preview"></div>
-            </div>
-            <h4 style="margin-top:20px;">Layout & Placement</h4>
-            <div class="form-row two-cols">
-              <div class="form-group">
-                <label>Header Layout</label>
-                <select name="printHeaderLayout">
-                  <option value="standard">Standard (Company Left, Title Right)</option>
-                  <option value="flipped">Flipped (Title Left, Company Right)</option>
-                  <option value="centered">Centered (Everything Centered)</option>
-                </select>
+            <div class="print-style-wrap">
+              <div class="print-preview-column">
+                <div class="preview-label">Preview — your selected theme</div>
+                <div class="theme-preview-wrap">
+                  <div id="theme-preview-box" class="theme-preview-inner"></div>
+                </div>
               </div>
-              <div class="form-group">
-                <label>Logo Alignment</label>
-                <select name="printLogoPosition">
-                  <option value="left">Left</option>
-                  <option value="center">Center</option>
-                  <option value="right">Right</option>
-                </select>
+              <div class="print-controls-column">
+                <div class="control-card">
+                  <h4>Theme</h4>
+                  <div class="form-group">
+                    <label>Invoice Theme</label>
+                    <select name="printTemplate">
+                      <option value="modern">Modern</option>
+                      <option value="creative">Creative</option>
+                      <option value="elegant">Elegant</option>
+                      <option value="bold">Bold</option>
+                      <option value="standard">Standard</option>
+                      <option value="smart">Smart</option>
+                      <option value="advance">Advance</option>
+                      <option value="curves">Curves</option>
+                      <option value="stripes">Stripes</option>
+                      <option value="block">Block</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="control-card">
+                  <h4>Layout &amp; Placement</h4>
+                  <div class="form-group">
+                    <label>Header Layout</label>
+                    <select name="printHeaderLayout">
+                      <option value="standard">Standard (Company Left, Title Right)</option>
+                      <option value="flipped">Flipped (Title Left, Company Right)</option>
+                      <option value="centered">Centered</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Logo Alignment</label>
+                    <select name="printLogoPosition">
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                      <option value="right">Right</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="checkbox-label"><input type="checkbox" name="printWatermark" /> Watermark logo</label>
+                  </div>
+                  <div class="form-group">
+                    <label>Signature Label</label>
+                    <input type="text" name="printSignatureLabel" placeholder="e.g. Authorized Signatory" />
+                  </div>
+                </div>
+                <div class="control-card">
+                  <h4>Style</h4>
+                  <div class="form-group">
+                    <label>Invoice title</label>
+                    <input type="text" name="printTitle" placeholder="TAX INVOICE" />
+                  </div>
+                  <div class="form-group">
+                    <label>Accent color</label>
+                    <div class="color-input-wrap" style="display:flex;align-items:center;gap:10px;">
+                      <input type="color" id="printPrimaryColorPicker" value="#0d9488" title="Pick color" style="width:40px;height:40px;padding:2px;cursor:pointer;border:1px solid var(--border);border-radius:8px;" />
+                      <input type="text" name="printPrimaryColor" placeholder="#0d9488" style="flex:1;" />
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>Logo height (px)</label>
+                    <input type="number" name="printLogoMaxHeight" min="24" max="120" placeholder="56" />
+                  </div>
+                  <div class="form-group">
+                    <label>Font</label>
+                    <select name="printFont">
+                      <option value="system-ui, Arial, sans-serif">System / Arial</option>
+                      <option value="Georgia, serif">Georgia</option>
+                      <option value="'Segoe UI', system-ui, sans-serif">Segoe UI</option>
+                      <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Table style</label>
+                    <select name="printTableStyle">
+                      <option value="bordered">Bordered</option>
+                      <option value="minimal">Minimal</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Thank you message</label>
+                    <input type="text" name="printThankYouText" placeholder="Thank you for your business." />
+                    <span class="muted" style="font-size:0.8125rem;">Leave empty to hide.</span>
+                  </div>
+                </div>
+                <div class="control-card">
+                  <h4>Header typography</h4>
+                  <p class="muted" style="font-size:0.75rem;margin:-8px 0 12px 0;">Font, color, and size for each header element. Applies to all themes.</p>
+                  <div class="header-typo-group">
+                    <label class="typo-label">Company name</label>
+                    <div class="form-row two-cols" style="gap:8px;">
+                      <div class="form-group" style="margin-bottom:8px;">
+                        <label>Font</label>
+                        <select name="printCompanyNameFont">
+                          <option value="system-ui, Arial, sans-serif">System / Arial</option>
+                          <option value="Georgia, serif">Georgia</option>
+                          <option value="'Segoe UI', system-ui, sans-serif">Segoe UI</option>
+                          <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                          <option value="'Pacifico', cursive">Pacifico (script)</option>
+                          <option value="'Great Vibes', cursive">Great Vibes (elegant script)</option>
+                          <option value="'Dancing Script', cursive">Dancing Script (casual script)</option>
+                          <option value="'Bebas Neue', sans-serif">Bebas Neue (bold condensed)</option>
+                          <option value="'Oswald', sans-serif">Oswald (condensed)</option>
+                          <option value="'Playfair Display', serif">Playfair Display (serif)</option>
+                          <option value="'Orbitron', sans-serif">Orbitron (tech)</option>
+                          <option value="'Montserrat', sans-serif">Montserrat (modern)</option>
+                        </select>
+                      </div>
+                      <div class="form-group" style="margin-bottom:8px;">
+                        <label>Color</label>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                          <input type="color" name="printCompanyNameColorPicker" title="Company name color" style="width:36px;height:36px;padding:2px;cursor:pointer;border:1px solid var(--border);border-radius:6px;" />
+                          <input type="text" name="printCompanyNameColor" placeholder="#111827" style="flex:1;min-width:0;" />
+                        </div>
+                      </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom:12px;">
+                      <label>Size (px)</label>
+                      <input type="number" name="printCompanyNameSize" min="12" max="48" placeholder="22" style="width:80px;" />
+                    </div>
+                  </div>
+                  <div class="header-typo-group">
+                    <label class="typo-label">Invoice title (e.g. TAX INVOICE)</label>
+                    <div class="form-row two-cols" style="gap:8px;">
+                      <div class="form-group" style="margin-bottom:8px;">
+                        <label>Font</label>
+                        <select name="printTitleFont">
+                          <option value="system-ui, Arial, sans-serif">System / Arial</option>
+                          <option value="Georgia, serif">Georgia</option>
+                          <option value="'Segoe UI', system-ui, sans-serif">Segoe UI</option>
+                          <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                          <option value="'Pacifico', cursive">Pacifico (script)</option>
+                          <option value="'Great Vibes', cursive">Great Vibes (elegant script)</option>
+                          <option value="'Dancing Script', cursive">Dancing Script (casual script)</option>
+                          <option value="'Bebas Neue', sans-serif">Bebas Neue (bold condensed)</option>
+                          <option value="'Oswald', sans-serif">Oswald (condensed)</option>
+                          <option value="'Playfair Display', serif">Playfair Display (serif)</option>
+                          <option value="'Orbitron', sans-serif">Orbitron (tech)</option>
+                          <option value="'Montserrat', sans-serif">Montserrat (modern)</option>
+                        </select>
+                      </div>
+                      <div class="form-group" style="margin-bottom:8px;">
+                        <label>Color</label>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                          <input type="color" name="printTitleColorPicker" title="Title color" style="width:36px;height:36px;padding:2px;cursor:pointer;border:1px solid var(--border);border-radius:6px;" />
+                          <input type="text" name="printTitleColor" placeholder="#4b5563" style="flex:1;min-width:0;" />
+                        </div>
+                      </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom:12px;">
+                      <label>Size (px)</label>
+                      <input type="number" name="printTitleSize" min="12" max="48" placeholder="24" style="width:80px;" />
+                    </div>
+                  </div>
+                  <div class="header-typo-group">
+                    <label class="typo-label">Other header (address, tagline, invoice no, date)</label>
+                    <div class="form-row two-cols" style="gap:8px;">
+                      <div class="form-group" style="margin-bottom:8px;">
+                        <label>Font</label>
+                        <select name="printHeaderMetaFont">
+                          <option value="system-ui, Arial, sans-serif">System / Arial</option>
+                          <option value="Georgia, serif">Georgia</option>
+                          <option value="'Segoe UI', system-ui, sans-serif">Segoe UI</option>
+                          <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                          <option value="'Pacifico', cursive">Pacifico (script)</option>
+                          <option value="'Oswald', sans-serif">Oswald (condensed)</option>
+                          <option value="'Montserrat', sans-serif">Montserrat (modern)</option>
+                        </select>
+                      </div>
+                      <div class="form-group" style="margin-bottom:8px;">
+                        <label>Color</label>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                          <input type="color" name="printHeaderMetaColorPicker" title="Meta color" style="width:36px;height:36px;padding:2px;cursor:pointer;border:1px solid var(--border);border-radius:6px;" />
+                          <input type="text" name="printHeaderMetaColor" placeholder="#6b7280" style="flex:1;min-width:0;" />
+                        </div>
+                      </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                      <label>Size (px)</label>
+                      <input type="number" name="printHeaderMetaSize" min="10" max="24" placeholder="13" style="width:80px;" />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="form-row two-cols">
-              <div class="form-group">
-                <label class="checkbox-label" style="margin-top:8px;"><input type="checkbox" name="printWatermark" /> Show Logo as Background Watermark</label>
-              </div>
-              <div class="form-group">
-                <label>Signature Label</label>
-                <input type="text" name="printSignatureLabel" placeholder="e.g. Authorized Signatory" />
-              </div>
-            </div>
-            <h4 style="margin-top:20px;">Style Setup</h4>
-            <div class="form-group">
-              <label>Invoice title (printed header)</label>
-              <input type="text" name="printTitle" placeholder="TAX INVOICE" />
-            </div>
-            <div class="form-row two-cols">
-              <div class="form-group">
-                <label>Accent color (header &amp; borders)</label>
-                <input type="text" name="printPrimaryColor" placeholder="#0d9488" />
-              </div>
-              <div class="form-group">
-                <label>Logo max height (px)</label>
-                <input type="number" name="printLogoMaxHeight" min="24" max="120" placeholder="56" />
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Font family</label>
-              <select name="printFont">
-                <option value="system-ui, Arial, sans-serif">System / Arial</option>
-                <option value="Georgia, serif">Georgia</option>
-                <option value="'Segoe UI', system-ui, sans-serif">Segoe UI</option>
-                <option value="'Times New Roman', Times, serif">Times New Roman</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Table style</label>
-              <select name="printTableStyle">
-                <option value="bordered">Bordered (grid)</option>
-                <option value="minimal">Minimal (clean lines)</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Thank you / footer message</label>
-              <input type="text" name="printThankYouText" placeholder="Thank you for your business." />
-              <span class="muted" style="font-size:0.8125rem;">Leave empty to hide.</span>
-            </div>
-          </div>
-          <div class="form-actions" style="margin-top:20px;">
+            <div class="form-actions" style="margin-top:20px;">
             <button type="button" class="btn btn-outline modal-close">Cancel</button>
             <button type="submit" class="btn btn-primary">Save Business</button>
           </div>
@@ -1745,8 +1883,10 @@ function renderSettings(container) {
   const form = $('#business-form', container);
   let pendingLogoData = null;
   let logoRemoved = false;
+  let _modalBusiness = null;
 
   function openModal(business) {
+    _modalBusiness = business;
     logoRemoved = false;
     $('#business-modal-title', container).textContent = business ? 'Edit Business' : 'Add Business';
     form.querySelector('[name="id"]').value = business ? business.id : '';
@@ -1791,9 +1931,20 @@ function renderSettings(container) {
       form.querySelector('[name="printLogoPosition"]').value = s.printLogoPosition || def.printLogoPosition || 'left';
       form.querySelector('[name="printWatermark"]').checked = s.printWatermark === true;
       form.querySelector('[name="printSignatureLabel"]').value = s.printSignatureLabel || def.printSignatureLabel || '';
+      form.querySelector('[name="printCompanyNameFont"]').value = s.printCompanyNameFont != null ? s.printCompanyNameFont : (def.printCompanyNameFont || 'system-ui, Arial, sans-serif');
+      form.querySelector('[name="printCompanyNameColor"]').value = s.printCompanyNameColor || def.printCompanyNameColor || '#111827';
+      form.querySelector('[name="printCompanyNameSize"]').value = s.printCompanyNameSize != null ? s.printCompanyNameSize : (def.printCompanyNameSize ?? 22);
+      form.querySelector('[name="printTitleFont"]').value = s.printTitleFont != null ? s.printTitleFont : (def.printTitleFont || 'system-ui, Arial, sans-serif');
+      form.querySelector('[name="printTitleColor"]').value = s.printTitleColor || def.printTitleColor || '#4b5563';
+      form.querySelector('[name="printTitleSize"]').value = s.printTitleSize != null ? s.printTitleSize : (def.printTitleSize ?? 24);
+      form.querySelector('[name="printHeaderMetaFont"]').value = s.printHeaderMetaFont != null ? s.printHeaderMetaFont : (def.printHeaderMetaFont || 'system-ui, Arial, sans-serif');
+      form.querySelector('[name="printHeaderMetaColor"]').value = s.printHeaderMetaColor || def.printHeaderMetaColor || '#6b7280';
+      form.querySelector('[name="printHeaderMetaSize"]').value = s.printHeaderMetaSize != null ? s.printHeaderMetaSize : (def.printHeaderMetaSize ?? 13);
       form.querySelector('[name="showTagline"]').checked = s.showTagline === true;
       form.querySelector('[name="showBankDetails"]').checked = s.showBankDetails === true;
       form.querySelector('[name="showAmountInWords"]').checked = s.showAmountInWords !== false;
+      syncColorPickerFromText();
+      syncHeaderTypoColorPickers();
     } else {
       renderCustomizeLists(D.defaultInvoiceSettings());
       const def = D.defaultInvoiceSettings();
@@ -1811,223 +1962,191 @@ function renderSettings(container) {
       form.querySelector('[name="printLogoPosition"]').value = def.printLogoPosition || 'left';
       form.querySelector('[name="printWatermark"]').checked = def.printWatermark === true;
       form.querySelector('[name="printSignatureLabel"]').value = def.printSignatureLabel || '';
+      form.querySelector('[name="printCompanyNameFont"]').value = def.printCompanyNameFont || 'system-ui, Arial, sans-serif';
+      form.querySelector('[name="printCompanyNameColor"]').value = def.printCompanyNameColor || '#111827';
+      form.querySelector('[name="printCompanyNameSize"]').value = def.printCompanyNameSize != null ? def.printCompanyNameSize : 22;
+      form.querySelector('[name="printTitleFont"]').value = def.printTitleFont || 'system-ui, Arial, sans-serif';
+      form.querySelector('[name="printTitleColor"]').value = def.printTitleColor || '#4b5563';
+      form.querySelector('[name="printTitleSize"]').value = def.printTitleSize != null ? def.printTitleSize : 24;
+      form.querySelector('[name="printHeaderMetaFont"]').value = def.printHeaderMetaFont || 'system-ui, Arial, sans-serif';
+      form.querySelector('[name="printHeaderMetaColor"]').value = def.printHeaderMetaColor || '#6b7280';
+      form.querySelector('[name="printHeaderMetaSize"]').value = def.printHeaderMetaSize != null ? def.printHeaderMetaSize : 13;
+      syncColorPickerFromText();
+      syncHeaderTypoColorPickers();
+    }
+    function syncColorPickerFromText() {
+      var picker = form.querySelector('#printPrimaryColorPicker');
+      var textEl = form.querySelector('[name="printPrimaryColor"]');
+      if (!picker || !textEl) return;
+      var textVal = textEl.value.trim();
+      if (!/^#([0-9A-Fa-f]{3}){1,2}$/.test(textVal)) return;
+      picker.value = textVal.length === 7 ? textVal : '#' + textVal[1] + textVal[1] + textVal[2] + textVal[2] + textVal[3] + textVal[3];
+    }
+    function syncHeaderTypoColorPickers() {
+      function syncOne(pickerName, textName) {
+        var picker = form.querySelector('[name="' + pickerName + '"]');
+        var textEl = form.querySelector('[name="' + textName + '"]');
+        if (!picker || !textEl) return;
+        var v = textEl.value.trim();
+        if (/^#([0-9A-Fa-f]{3}){1,2}$/.test(v)) picker.value = v.length === 7 ? v : '#' + v[1]+v[1]+v[2]+v[2]+v[3]+v[3];
+      }
+      syncOne('printCompanyNameColorPicker', 'printCompanyNameColor');
+      syncOne('printTitleColorPicker', 'printTitleColor');
+      syncOne('printHeaderMetaColorPicker', 'printHeaderMetaColor');
     }
     updateThemePreview();
     modal.classList.remove('hidden');
   }
 
+  function getFormVal(name, def) {
+    const el = form.querySelector('[name="' + name + '"]');
+    if (!el) return def;
+    if (el.checked !== undefined) return el.checked;
+    const v = el.value;
+    return v != null ? (typeof v.trim === 'function' ? v.trim() : v) : def;
+  }
+  function getFormNum(name, def) {
+    const v = parseInt(getFormVal(name, ''), 10);
+    return isNaN(v) ? def : v;
+  }
+
   function updateThemePreview() {
     const previewBox = document.getElementById('theme-preview-box');
-    if (!previewBox) return;
-    const theme = form.querySelector('[name="printTemplate"]').value || 'modern';
-    const accent = form.querySelector('[name="printPrimaryColor"]').value || '#4f46e5';
-    let html = '';
-    if (theme === 'advance') {
-      html = `
-        <div class="tp-advance" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-logo"></div>
-             <div class="tp-title"></div>
-          </div>
-          <div class="tp-content">
-             <div class="tp-lines"></div>
-             <div class="tp-lines" style="width: 60%"></div>
-             <div class="tp-table">
-               <div class="tp-th"></div>
-               <div class="tp-td"></div>
-               <div class="tp-td"></div>
-               <div class="tp-td"></div>
-             </div>
-             <div class="tp-summary"></div>
-          </div>
-        </div>
-      `;
-    } else if (theme === 'smart') {
-      html = `
-        <div class="tp-smart" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-left">
-               <div class="tp-logo"></div>
-               <div class="tp-lines"></div>
-             </div>
-             <div class="tp-right">
-               <div class="tp-title"></div>
-               <div class="tp-meta"></div>
-             </div>
-          </div>
-          <div class="tp-boxes">
-            <div class="tp-box"></div>
-            <div class="tp-box"></div>
-          </div>
-          <div class="tp-table">
-            <div class="tp-th"></div>
-            <div class="tp-td"></div>
-            <div class="tp-td"></div>
-          </div>
-          <div class="tp-summary"></div>
-        </div>
-      `;
-    } else if (theme === 'creative') {
-      html = `
-        <div class="tp-creative" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-logo"></div>
-             <div class="tp-title"></div>
-          </div>
-          <div class="tp-boxes">
-            <div class="tp-box"></div>
-            <div class="tp-box"></div>
-          </div>
-          <div class="tp-table">
-            <div class="tp-th"></div>
-            <div class="tp-td"></div>
-            <div class="tp-td"></div>
-          </div>
-          <div class="tp-summary"></div>
-        </div>
-      `;
-    } else if (theme === 'elegant') {
-      html = `
-        <div class="tp-elegant" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-logo"></div>
-             <div class="tp-title"></div>
-          </div>
-          <div class="tp-lines" style="margin: 0 auto;"></div>
-          <div class="tp-table">
-            <div class="tp-th"></div>
-            <div class="tp-td"></div>
-            <div class="tp-td"></div>
-          </div>
-          <div class="tp-summary"></div>
-        </div>
-      `;
-    } else if (theme === 'bold') {
-      html = `
-        <div class="tp-bold" style="--tp-color: ${accent}">
-          <div class="tp-sidebar"></div>
-          <div class="tp-content">
-            <div class="tp-header">
-               <div class="tp-title"></div>
-               <div class="tp-logo"></div>
-            </div>
-            <div class="tp-box"></div>
-            <div class="tp-table">
-              <div class="tp-th"></div>
-              <div class="tp-td"></div>
-              <div class="tp-td"></div>
-            </div>
-            <div class="tp-summary"></div>
-          </div>
-        </div>
-      `;
-    } else if (theme === 'standard') {
-      html = `
-        <div class="tp-standard" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-logo"></div>
-             <div class="tp-title"></div>
-          </div>
-          <div class="tp-boxes">
-            <div class="tp-box"></div>
-            <div class="tp-box"></div>
-          </div>
-          <div class="tp-table">
-            <div class="tp-th"></div>
-            <div class="tp-td"></div>
-            <div class="tp-td"></div>
-          </div>
-          <div class="tp-summary"></div>
-        </div>
-      `;
-    } else if (theme === 'curves') {
-      html = `
-        <div class="tp-curves" style="--tp-color: ${accent}">
-          <div class="tp-swoosh-top"></div>
-          <div class="tp-swoosh-bot"></div>
-          <div class="tp-header">
-             <div class="tp-logo"></div>
-             <div class="tp-title"></div>
-          </div>
-          <div class="tp-boxes" style="position:relative;z-index:1;">
-            <div class="tp-box"></div>
-          </div>
-          <div class="tp-table" style="position:relative;z-index:1;">
-            <div class="tp-th"></div>
-            <div class="tp-td"></div>
-            <div class="tp-td"></div>
-          </div>
-          <div class="tp-summary" style="position:relative;z-index:1;"></div>
-        </div>
-      `;
-    } else if (theme === 'stripes') {
-      html = `
-        <div class="tp-stripes" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-logo"></div>
-             <div class="tp-title"></div>
-          </div>
-          <div class="tp-table">
-            <div class="tp-th"></div>
-            <div class="tp-row"><div class="tp-td"></div></div>
-            <div class="tp-row"><div class="tp-td"></div></div>
-            <div class="tp-row"><div class="tp-td"></div></div>
-          </div>
-          <div class="tp-summary"></div>
-        </div>
-      `;
-    } else if (theme === 'block') {
-      html = `
-        <div class="tp-block" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-left">
-               <div class="tp-logo"></div>
-               <div class="tp-line" style="width:40px;height:4px;margin-top:4px;"></div>
-             </div>
-             <div class="tp-right">
-               <div class="tp-title"></div>
-             </div>
-          </div>
-          <div class="tp-table">
-            <div class="tp-th"></div>
-            <div class="tp-td"></div>
-            <div class="tp-td"></div>
-          </div>
-          <div class="tp-summary"></div>
-        </div>
-      `;
-    } else {
-      // modern
-      html = `
-        <div class="tp-modern" style="--tp-color: ${accent}">
-          <div class="tp-header">
-             <div class="tp-left">
-               <div class="tp-logo"></div>
-               <div class="tp-lines"></div>
-             </div>
-             <div class="tp-right">
-               <div class="tp-title"></div>
-               <div class="tp-meta"></div>
-             </div>
-          </div>
-          <div class="tp-billto"></div>
-          <div class="tp-table">
-            <div class="tp-th"></div>
-            <div class="tp-td"></div>
-            <div class="tp-td"></div>
-          </div>
-          <div class="tp-summary"></div>
-        </div>
-      `;
+    if (!previewBox || !form) return;
+    try {
+      const def = D.defaultInvoiceSettings();
+      var collected = null;
+      try {
+        collected = collectInvoiceSettings();
+      } catch (e) { /* use defaults for columns/headers/summary */ }
+      var columns = (collected && collected.columns && collected.columns.length) ? collected.columns : (def.columns || []);
+      var headerFields = (collected && collected.headerFields && collected.headerFields.length) ? collected.headerFields : (def.headerFields || []);
+      var summaryRows = (collected && collected.summaryRows && collected.summaryRows.length) ? collected.summaryRows : (def.summaryRows || []);
+      var pickerEl = form.querySelector('#printPrimaryColorPicker');
+      var colorText = getFormVal('printPrimaryColor', '');
+      var accentHex = (pickerEl && pickerEl.value) ? pickerEl.value : (colorText || '#0d9488');
+      if (!/^#([0-9A-Fa-f]{3}){1,2}$/.test(accentHex)) accentHex = '#0d9488';
+      else if (accentHex.length === 4) accentHex = '#' + accentHex[1] + accentHex[1] + accentHex[2] + accentHex[2] + accentHex[3] + accentHex[3];
+      var settings = {
+        columns: columns,
+        headerFields: headerFields,
+        summaryRows: summaryRows,
+        showTagline: getInvSettingCheckbox('showTagline'),
+        showBankDetails: getInvSettingCheckbox('showBankDetails'),
+        showAmountInWords: getInvSettingCheckbox('showAmountInWords'),
+        showBillTo: true,
+        showTerms: def.showTerms,
+        showNotes: def.showNotes,
+        termsText: def.termsText || '',
+        notesText: def.notesText || '',
+        printTitle: getFormVal('printTitle', '') || 'TAX INVOICE',
+        printPrimaryColor: accentHex,
+        printLogoMaxHeight: getFormNum('printLogoMaxHeight', 56),
+        printFont: getFormVal('printFont', '') || 'system-ui, Arial, sans-serif',
+        printTableStyle: getFormVal('printTableStyle', '') || 'bordered',
+        printThankYouText: getFormVal('printThankYouText', ''),
+        printTemplate: getFormVal('printTemplate', '') || 'modern',
+        printHeaderLayout: getFormVal('printHeaderLayout', '') || 'standard',
+        printLogoPosition: getFormVal('printLogoPosition', '') || 'left',
+        printWatermark: form.querySelector('[name="printWatermark"]') ? form.querySelector('[name="printWatermark"]').checked : false,
+        printSignatureLabel: getFormVal('printSignatureLabel', ''),
+        printCompanyNameFont: getFormVal('printCompanyNameFont', '') || 'system-ui, Arial, sans-serif',
+        printCompanyNameColor: (form.querySelector('[name="printCompanyNameColorPicker"]') && form.querySelector('[name="printCompanyNameColorPicker"]').value) || getFormVal('printCompanyNameColor', '') || '#111827',
+        printCompanyNameSize: getFormNum('printCompanyNameSize', 22),
+        printTitleFont: getFormVal('printTitleFont', '') || 'system-ui, Arial, sans-serif',
+        printTitleColor: (form.querySelector('[name="printTitleColorPicker"]') && form.querySelector('[name="printTitleColorPicker"]').value) || getFormVal('printTitleColor', '') || '#4b5563',
+        printTitleSize: getFormNum('printTitleSize', 24),
+        printHeaderMetaFont: getFormVal('printHeaderMetaFont', '') || 'system-ui, Arial, sans-serif',
+        printHeaderMetaColor: (form.querySelector('[name="printHeaderMetaColorPicker"]') && form.querySelector('[name="printHeaderMetaColorPicker"]').value) || getFormVal('printHeaderMetaColor', '') || '#6b7280',
+        printHeaderMetaSize: getFormNum('printHeaderMetaSize', 13),
+      };
+      var company = {
+        name: getFormVal('name', '') || 'Your Company',
+        address: getFormVal('address', '') || 'Address, City',
+        gstin: getFormVal('gstin', '') || '',
+        state: getFormVal('state', '') || ''
+      };
+      var business = {
+        logo: pendingLogoData || (_modalBusiness && _modalBusiness.logo) || null,
+        tagline: getFormVal('tagline', '') || '',
+        bankName: getFormVal('bankName', '') || '',
+        bankAccountNo: getFormVal('bankAccountNo', '') || '',
+        bankIfsc: getFormVal('bankIfsc', '') || '',
+        upiId: getFormVal('upiId', '') || ''
+      };
+      var sampleInv = {
+        invoiceNumber: 'INV-001',
+        date: new Date().toLocaleDateString('en-IN'),
+        dueDate: '',
+        poNumber: '',
+        customerName: 'Sample Customer',
+        customerAddress: '123 Street, City',
+        customerGstin: '-',
+        customerState: '-',
+        items: [
+          { productName: 'Sample Item', hsn: '1234', unit: 'Pcs', qty: 1, rate: 1000, discount: 0, taxable: 1000, cgst: 90, sgst: 90, igst: 0, amount: 1180 },
+          { productName: 'Another Item', hsn: '5678', unit: 'Pcs', qty: 2, rate: 1200, discount: 0, taxable: 2400, cgst: 216, sgst: 216, igst: 0, amount: 2832 }
+        ],
+        roundOff: 0,
+        grandTotal: 4012
+      };
+      var htmlContent = buildInvoicePrintHtml(sampleInv, company, settings, business);
+      var iframe = previewBox.querySelector('iframe');
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.setAttribute('title', 'Invoice theme preview');
+        iframe.style.cssText = 'width:100%;height:100%;min-height:420px;border:0;border-radius:8px;';
+        previewBox.innerHTML = '';
+        previewBox.appendChild(iframe);
+      }
+      iframe.srcdoc = htmlContent;
+    } catch (e) {
+      previewBox.innerHTML = '<p class="muted" style="padding:20px;">Preview unavailable. ' + (e && e.message ? e.message : '') + '</p>';
     }
-    previewBox.innerHTML = html;
   }
 
   const themeSelect = form.querySelector('[name="printTemplate"]');
   const colorInput = form.querySelector('[name="printPrimaryColor"]');
+  const colorPicker = form.querySelector('#printPrimaryColorPicker');
   if (themeSelect) themeSelect.addEventListener('change', updateThemePreview);
   if (colorInput) colorInput.addEventListener('input', updateThemePreview);
-
+  var layoutSelect = form.querySelector('[name="printHeaderLayout"]');
+  if (layoutSelect) layoutSelect.addEventListener('change', updateThemePreview);
+  var logoPositionEl = form.querySelector('[name="printLogoPosition"]');
+  if (logoPositionEl) logoPositionEl.addEventListener('change', updateThemePreview);
+  form.querySelectorAll('[name="printTitle"], [name="printFont"], [name="printTableStyle"], [name="printThankYouText"], [name="printLogoMaxHeight"], [name="printWatermark"], [name="printSignatureLabel"], [name="printCompanyNameFont"], [name="printCompanyNameColor"], [name="printCompanyNameSize"], [name="printTitleFont"], [name="printTitleColor"], [name="printTitleSize"], [name="printHeaderMetaFont"], [name="printHeaderMetaColor"], [name="printHeaderMetaSize"]').forEach(function (el) {
+    if (el) { el.addEventListener('change', updateThemePreview); el.addEventListener('input', updateThemePreview); }
+  });
+  [['printCompanyNameColorPicker', 'printCompanyNameColor'], ['printTitleColorPicker', 'printTitleColor'], ['printHeaderMetaColorPicker', 'printHeaderMetaColor']].forEach(function (pair) {
+    var picker = form.querySelector('[name="' + pair[0] + '"]');
+    var textEl = form.querySelector('[name="' + pair[1] + '"]');
+    if (picker && textEl) {
+      picker.addEventListener('input', function () { textEl.value = picker.value; updateThemePreview(); });
+      picker.addEventListener('change', function () { textEl.value = picker.value; updateThemePreview(); });
+      textEl.addEventListener('input', function () { if (/^#([0-9A-Fa-f]{3}){1,2}$/.test(textEl.value.trim())) picker.value = textEl.value.length === 7 ? textEl.value : '#' + textEl.value[1]+textEl.value[1]+textEl.value[2]+textEl.value[2]+textEl.value[3]+textEl.value[3]; updateThemePreview(); });
+    }
+  });
+  // Sync color palette picker with text field (two-way)
+  function hexTo6(h) {
+    if (!h || !/^#([0-9A-Fa-f]{3}){1,2}$/.test(h)) return '#0d9488';
+    if (h.length === 7) return h;
+    return '#' + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+  }
+  if (colorPicker && colorInput) {
+    colorPicker.addEventListener('input', function () {
+      colorInput.value = colorPicker.value;
+      updateThemePreview();
+    });
+    colorPicker.addEventListener('change', function () {
+      colorInput.value = colorPicker.value;
+      updateThemePreview();
+    });
+    colorInput.addEventListener('input', function () {
+      var hex = colorInput.value.trim();
+      if (/^#([0-9A-Fa-f]{3}){1,2}$/.test(hex)) colorPicker.value = hexTo6(hex);
+      updateThemePreview();
+    });
+  }
   function getInvSettingCheckbox(name) {
     const el = form.querySelector('[name="' + name + '"]');
     return el ? el.checked : false;
@@ -2160,6 +2279,9 @@ function renderSettings(container) {
     const headerLayoutEl = form.querySelector('[name="printHeaderLayout"]');
     const logoPositionEl = form.querySelector('[name="printLogoPosition"]');
     const signatureLabelEl = form.querySelector('[name="printSignatureLabel"]');
+    const companyNameColorEl = form.querySelector('[name="printCompanyNameColor"]');
+    const titleColorEl = form.querySelector('[name="printTitleColor"]');
+    const headerMetaColorEl = form.querySelector('[name="printHeaderMetaColor"]');
     return {
       columns,
       headerFields,
@@ -2178,6 +2300,15 @@ function renderSettings(container) {
       printHeaderLayout: headerLayoutEl ? headerLayoutEl.value : 'standard',
       printLogoPosition: logoPositionEl ? logoPositionEl.value : 'left',
       printSignatureLabel: signatureLabelEl ? signatureLabelEl.value.trim() : '',
+      printCompanyNameFont: (form.querySelector('[name="printCompanyNameFont"]') || {}).value,
+      printCompanyNameColor: companyNameColorEl ? (companyNameColorEl.value.trim() || '#111827') : '#111827',
+      printCompanyNameSize: parseInt((form.querySelector('[name="printCompanyNameSize"]') || {}).value, 10) || 22,
+      printTitleFont: (form.querySelector('[name="printTitleFont"]') || {}).value,
+      printTitleColor: titleColorEl ? (titleColorEl.value.trim() || '#4b5563') : '#4b5563',
+      printTitleSize: parseInt((form.querySelector('[name="printTitleSize"]') || {}).value, 10) || 24,
+      printHeaderMetaFont: (form.querySelector('[name="printHeaderMetaFont"]') || {}).value,
+      printHeaderMetaColor: headerMetaColorEl ? (headerMetaColorEl.value.trim() || '#6b7280') : '#6b7280',
+      printHeaderMetaSize: parseInt((form.querySelector('[name="printHeaderMetaSize"]') || {}).value, 10) || 13,
     };
   }
 
@@ -2250,7 +2381,9 @@ function renderSettings(container) {
       container.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
       container.querySelectorAll('.tab-pane').forEach((p) => p.classList.add('hidden'));
       btn.classList.add('active');
-      $('#tab-' + btn.dataset.tab, container).classList.remove('hidden');
+      var tabId = btn.dataset.tab;
+      $('#tab-' + tabId, container).classList.remove('hidden');
+      if (tabId === 'print') updateThemePreview();
     });
   });
 
